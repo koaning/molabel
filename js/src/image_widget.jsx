@@ -312,6 +312,125 @@ const Polygon = ({ annotation, isSelected, onSelect, onUpdate }) => {
   );
 };
 
+
+const Line = ({ annotation, isSelected, onSelect, onUpdate }) => {
+  const textRef = useRef(null);
+  const [textBBox, setTextBBox] = useState({ width: 0, height: 0 });
+  const color = annotation.color || "red";
+
+  React.useEffect(() => {
+    if (textRef.current) {
+      const bbox = textRef.current.getBBox();
+      setTextBBox({ width: bbox.width, height: bbox.height });
+    }
+  }, [annotation.label]);
+
+  const handleMouseDown = (e) => {
+    e.stopPropagation();
+    onSelect(annotation.id);
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const initialPoints = annotation.points;
+
+    const handleMouseMove = (moveEvent) => {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      const newPoints = initialPoints.map(point => ({
+        x: point.x + dx,
+        y: point.y + dy
+      }));
+      onUpdate({ ...annotation, points: newPoints });
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  };
+
+  const handleVertexMouseDown = (e, vertexIndex) => {
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const initialPoints = annotation.points;
+
+    const handleMouseMove = (moveEvent) => {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      const newPoints = [...initialPoints];
+      newPoints[vertexIndex] = {
+        x: initialPoints[vertexIndex].x + dx,
+        y: initialPoints[vertexIndex].y + dy
+      };
+      onUpdate({ ...annotation, points: newPoints });
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  };
+
+  // remove `Z` so the both ends of the line is not closing
+  const pathData = annotation.points.length > 0 
+    ? `M ${annotation.points.map(p => `${p.x},${p.y}`).join(' L ')}`
+    : '';
+
+  const labelPosition = annotation.points.length > 0 ? annotation.points[0] : { x: 0, y: 0 };
+
+  return (
+    <g style={{ userSelect: 'none' }}>
+      <g onMouseDown={handleMouseDown} style={{ cursor: "move" }}>
+        <path
+          d={pathData}
+          stroke={color}
+          strokeWidth="3"
+          fill="transparent"
+        />
+      </g>
+      {annotation.label && (
+        <g onMouseDown={(e) => { e.stopPropagation(); onSelect(annotation.id); }}>
+          <rect
+            x={labelPosition.x}
+            y={labelPosition.y - 18}
+            width={textBBox.width + 4}
+            height={textBBox.height}
+            fill={color}
+          />
+          <text
+            ref={textRef}
+            x={labelPosition.x + 2}
+            y={labelPosition.y - 4}
+            fill="white"
+            fontSize="14"
+            style={{ pointerEvents: "none" }}
+          >
+            {annotation.label}
+          </text>
+        </g>
+      )}
+      {isSelected && annotation.points.map((point, index) => (
+        <rect
+          key={index}
+          x={point.x - 4}
+          y={point.y - 4}
+          width="8"
+          height="8"
+          fill={color}
+          onMouseDown={(e) => handleVertexMouseDown(e, index)}
+          style={{ cursor: "crosshair" }}
+        />
+      ))}
+    </g>
+  );
+};
+
 const DrawingArea = ({
   imageSrc,
   annotations,
@@ -324,6 +443,7 @@ const DrawingArea = ({
 }) => {
   const [drawing, setDrawing] = useState(null);
   const [polygonPoints, setPolygonPoints] = useState([]);
+  const [linePoints, setLinePoints] = useState([]);
   const containerRef = useRef(null);
   const imageRef = useRef(null);
   const hasDragged = useRef(false);
@@ -335,7 +455,7 @@ const DrawingArea = ({
     const isDataURI = imageSrc?.startsWith('data:image/');
     setIsLoading(true);
     setImageError(null);
-    
+
     // Handle base64 data URIs differently - they're immediately available
     if (isDataURI) {
       // Use a minimal timeout to ensure React has finished rendering
@@ -367,6 +487,25 @@ const DrawingArea = ({
     }
   }, [tool]);
 
+  React.useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (tool === "line") {
+        if (e.key === "Enter" || e.key === "Escape") {
+          finishLine();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [tool, linePoints, annotations, currentClass, imageDimensions]);
+
+  React.useEffect(() => {
+    // Clear line points when tool changes
+    if (tool !== "line") {
+      setLinePoints([]);
+    }
+  }, [tool]);
   function handleImageLoad() {
     setIsLoading(false);
     setImageError(null);
@@ -398,6 +537,20 @@ const DrawingArea = ({
     setPolygonPoints([]);
   }
 
+  function finishLine() {
+    if (linePoints.length >= 1) {
+      const newAnnotation = {
+        id: Date.now().toString(),
+        type: "line",
+        label: currentClass,
+        points: linePoints,
+        imageDimensions: { width: imageDimensions.width, height: imageDimensions.height }
+      };
+      onAnnotationChange([...annotations, newAnnotation]);
+      setSelectedShape(newAnnotation.id);
+    }
+    setLinePoints([]);
+  }
   function handleMouseDown(e) {
     if (e.target === containerRef.current || e.target.tagName === 'svg' || e.target.tagName === 'IMG') {
       setSelectedShape(null);
@@ -420,10 +573,14 @@ const DrawingArea = ({
       };
       onAnnotationChange([...annotations, newAnnotation]);
       setSelectedShape(newAnnotation.id);
+    } else if (tool === "line") {
+      const { x, y } = getCoordinates(e);
+      const relCoords = absoluteToRelative(x, y);
+      setLinePoints([...linePoints, relCoords]);
     } else if (tool === "polygon") {
       const { x, y } = getCoordinates(e);
       const relCoords = absoluteToRelative(x, y);
-      
+
       // Check if this is a double-click on the first point to close the polygon
       if (polygonPoints.length >= 3) {
         const firstPoint = polygonPoints[0];
@@ -434,7 +591,7 @@ const DrawingArea = ({
           return;
         }
       }
-      
+
       setPolygonPoints([...polygonPoints, relCoords]);
     }
   }
@@ -599,6 +756,20 @@ const DrawingArea = ({
                   />
                 );
               }
+              if (anno.type === "line") {
+                return (
+                  <Line
+                    key={anno.id}
+                    annotation={absAnno}
+                    isSelected={selectedShape === anno.id}
+                    onSelect={setSelectedShape}
+                    onUpdate={(updated) => {
+                      const relativeUpdated = convertAnnotationToRelative(updated);
+                      handleUpdateAnnotation(relativeUpdated);
+                    }}
+                  />
+                );
+              }
               if (anno.type === "polygon") {
                 return (
                   <Polygon
@@ -628,6 +799,50 @@ const DrawingArea = ({
                   fill="transparent"
                   strokeWidth="2"
                 />
+              );
+            })()}
+            {tool === "line" && linePoints.length > 0 && (() => {
+              const absPoints = linePoints.map(p => relativeToAbsolute(p.x, p.y));
+              if (absPoints.length === 1) {
+                return (
+                  <circle
+                    cx={absPoints[0].x}
+                    cy={absPoints[0].y}
+                    r="4"
+                    fill={drawingColor}
+                  />
+                );
+              }
+              const pathData = `M ${absPoints.map(p => `${p.x},${p.y}`).join(' L ')}`;
+              return (
+                <g>
+                  <path
+                    d={pathData}
+                    stroke={drawingColor}
+                    strokeWidth="2"
+                    fill="transparent"
+                  />
+                  {absPoints.map((point, index) => (
+                    <circle
+                      key={index}
+                      cx={point.x}
+                      cy={point.y}
+                      r="4"
+                      fill={drawingColor}
+                    />
+                  ))}
+                  {linePoints.length >= 1 && (
+                    <circle
+                      cx={absPoints[0].x}
+                      cy={absPoints[0].y}
+                      r="8"
+                      fill="transparent"
+                      stroke={drawingColor}
+                      strokeWidth="2"
+                      strokeDasharray="3,3"
+                    />
+                  )}
+                </g>
               );
             })()}
             {tool === "polygon" && polygonPoints.length > 0 && (() => {
@@ -706,6 +921,9 @@ const Toolbar = ({ tool, setTool, onClear, classes, currentClass, setCurrentClas
         </button>
         <button onClick={() => setTool("polygon")} disabled={tool === "polygon"} title="Draw Polygon">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"></polygon></svg>
+        </button>
+        <button onClick={() => setTool("line")} disabled={tool === "line"} title="Draw Line">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 L22 8.5 L22 15.5 L12 22"></path></svg>
         </button>
         <div style={{ flex: 1 }} />
         <button onClick={onUndo} disabled={!canUndo} title="Undo">
