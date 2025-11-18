@@ -1,4 +1,6 @@
 
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
 /* General "8-bit" styling */
 body {
     background-color: #000;
@@ -48,5 +50,3 @@ body {
     border-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAkAAAAJCAYAAADgkQYQAAAAKklEQVQoU2NkoBAwj8/Ozsbw9+8/EyAOrBo1aNGiRYsWLVq0aIABAQCEEgEB/0+6PgAAAABJRU5ErkJggg==') 4 stretch;
     background-color: #222;
 }
-
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
